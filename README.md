@@ -30,9 +30,8 @@ An AI data analysis Agent built using the Agno Agent framework and Openai's gpt-
 1. **Setup Environment**
    ```bash
    # Clone the repository
-   git clone https://github.com/Shubhamsaboo/awesome-llm-apps.git
-   cd awesome-llm-apps/starter_ai_agents/ai_data_analysis_agent
-
+   git clone https://github.com/yamanalrifaii/AI-Data-Analyst.git
+   
    # Install dependencies
    pip install -r requirements.txt
    ```
@@ -52,5 +51,3 @@ An AI data analysis Agent built using the Agno Agent framework and Openai's gpt-
 3. Upload your CSV or Excel file through the Streamlit interface
 4. Ask questions about your data in natural language
 5. View the results and generated visualizations
-
-# AI-Data-Analyst
