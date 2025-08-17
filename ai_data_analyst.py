@@ -29,21 +29,46 @@ def preprocess_and_save(file):
         for col in df.select_dtypes(include=['object']):
             df[col] = df[col].astype(str).replace({r'"': '""'}, regex=True)
         
-        # Parse dates and numeric columns
+        # Parse dates and numeric columns with better error handling
         for col in df.columns:
-            if 'date' in col.lower():
-                df[col] = pd.to_datetime(df[col], errors='coerce')
+            col_lower = col.lower()
+            if any(date_keyword in col_lower for date_keyword in ['date', 'time', 'created', 'updated', 'release']):
+                try:
+                    # Try to parse as datetime with more flexible parsing
+                    df[col] = pd.to_datetime(df[col], errors='coerce', infer_datetime_format=True)
+                    # Convert to string format that's more compatible with Streamlit
+                    df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception as e:
+                    st.warning(f"Could not parse column '{col}' as datetime: {e}")
+                    # Keep as string if datetime parsing fails
+                    df[col] = df[col].astype(str)
             elif df[col].dtype == 'object':
                 try:
-                    df[col] = pd.to_numeric(df[col])
+                    # Try to convert to numeric, but be more careful
+                    numeric_values = pd.to_numeric(df[col], errors='coerce')
+                    # Only convert if more than 80% of values are successfully converted
+                    if numeric_values.notna().sum() / len(df) > 0.8:
+                        df[col] = numeric_values
+                    else:
+                        df[col] = df[col].astype(str)
                 except (ValueError, TypeError):
-                    pass
+                    # Keep as string if conversion fails
+                    df[col] = df[col].astype(str)
         
+        # Clean up any problematic characters that might cause serialization issues
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.replace('\x00', '', regex=False)
+                df[col] = df[col].str.replace('\n', ' ', regex=False)
+                df[col] = df[col].str.replace('\r', ' ', regex=False)
+        
+        # Create a temporary file to save the preprocessed data
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_file:
             temp_path = temp_file.name
+            # Save the DataFrame to the temporary CSV file with quotes around string fields
             df.to_csv(temp_path, index=False, quoting=csv.QUOTE_ALL)
         
-        return temp_path, df.columns.tolist(), df 
+        return temp_path, df.columns.tolist(), df  # Return the DataFrame as well
     except Exception as e:
         st.error(f"Error processing file: {e}")
         return None, None, None
@@ -73,10 +98,62 @@ if uploaded_file is not None and "openai_key" in st.session_state:
     if temp_path and columns and df is not None:
         # Display the uploaded data as a table
         st.write("Uploaded Data:")
-        st.dataframe(df)  # Use st.dataframe for an interactive table
+        
+        # Safe dataframe display with error handling
+        try:
+            st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Could not display interactive dataframe: {e}")
+            st.write("Displaying data as static table instead...")
+            try:
+                # Try to display as a simple table
+                st.table(df.head(100))  # Limit to first 100 rows for performance
+                if len(df) > 100:
+                    st.info(f"Showing first 100 rows out of {len(df)} total rows")
+            except Exception as e2:
+                st.error(f"Could not display data table: {e2}")
+                st.write("Data loaded successfully but display failed. You can still use the AI agent to query your data.")
         
         # Display the columns of the uploaded data
         st.write("Uploaded columns:", columns)
+        
+        # Data validation and type information
+        st.subheader("🔍 Data Validation")
+        if len(columns) > 0:
+            # Show data types and potential issues
+            validation_info = []
+            for col in columns:
+                col_info = {
+                    "Column": col,
+                    "Data Type": str(df[col].dtype),
+                    "Sample Values": str(df[col].head(3).tolist()),
+                    "Missing Values": df[col].isnull().sum(),
+                    "Unique Values": df[col].nunique()
+                }
+                validation_info.append(col_info)
+            
+            validation_df = pd.DataFrame(validation_info)
+            st.dataframe(validation_df, use_container_width=True)
+            
+            # Check for potential issues
+            issues = []
+            for col in columns:
+                if df[col].dtype == 'object':
+                    # Check for very long strings that might cause issues
+                    max_length = df[col].astype(str).str.len().max()
+                    if max_length > 1000:
+                        issues.append(f"Column '{col}' has very long strings (max: {max_length} chars)")
+                    
+                    # Check for special characters
+                    if df[col].astype(str).str.contains(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', regex=True).any():
+                        issues.append(f"Column '{col}' contains control characters")
+            
+            if issues:
+                st.warning("⚠️ Potential data issues detected:")
+                for issue in issues:
+                    st.write(f"• {issue}")
+            else:
+                st.success("✅ Data validation passed - no obvious issues detected")
         
         # Data Visualization Section
         st.header("📊 Data Visualization")
